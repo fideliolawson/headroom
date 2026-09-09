@@ -1062,14 +1062,17 @@ _STATUS_STYLE = {PASS: "green", WARN: "yellow", FAIL: "red", SKIP: "dim"}
 _STATUS_GLYPH = {PASS: "✓", WARN: "⚠", FAIL: "✗", SKIP: "·"}
 
 
-def _render(checks: list[CheckResult], port: int, installed: str) -> None:
+def _render(
+    checks: list[CheckResult], port: int, installed: str
+) -> None:
     from rich.console import Console
     from rich.markup import escape
     from rich.table import Table
 
     console = Console()
     console.print(
-        f"[bold]Headroom Doctor[/bold] [dim]{format_version_label(installed)} · port {port}[/dim]\n"
+        f"[bold]Headroom Doctor[/bold] "
+        f"[dim]{format_version_label(installed)} · port {port}[/dim]\n"
     )
     table = Table(show_header=True, header_style="bold")
     table.add_column("check")
@@ -1141,7 +1144,7 @@ def doctor(port: int, emit_json: bool, network: bool, network_urls: tuple[str, .
     live_elsewhere = None
     if livez is None:
         # Cheap, bounded: only ports Headroom recorded (HEADROOM_PORT, 8787,
-        # deployment manifests, the project's wrap marker), probed in parallel.
+        # deployment manifests, project wrap markers, and live client markers).
         live_elsewhere = find_live_proxy_elsewhere(
             port,
             manifests=manifests,
