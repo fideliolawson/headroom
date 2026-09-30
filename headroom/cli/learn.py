@@ -423,9 +423,9 @@ def _activate_output_shaper(port: int | None = None) -> tuple[str, int]:
     import urllib.error
     import urllib.request
 
-    from headroom.cli._utils.proxy_discovery import resolve_proxy_port
+    from headroom.cli.port_discovery import resolve_read_port
 
-    resolved_port, _origin = resolve_proxy_port(port)
+    resolved_port, _origin = resolve_read_port(port)
     request = urllib.request.Request(
         f"http://127.0.0.1:{resolved_port}/admin/runtime-env",
         data=_json.dumps({"HEADROOM_OUTPUT_SHAPER": "1"}).encode("utf-8"),

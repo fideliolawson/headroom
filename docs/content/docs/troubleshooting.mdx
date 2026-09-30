@@ -46,9 +46,11 @@ ps aux | grep headroom
 port so it never claims the shared one, and any wrap falls forward to the next free
 port when `8787` is already bound.
 
-`headroom dashboard`, `headroom doctor` and `headroom inspect` auto-detect the port of
-the most recently started live session, so this normally resolves itself. If you still
-land on the wrong port, an explicit value is overriding detection — check it:
+`headroom dashboard` and `headroom inspect` auto-detect the most recently started live
+wrap session, so this normally resolves itself. `headroom doctor` keeps the requested port
+and reports a live proxy found elsewhere, along with the command to rerun it against that
+port. If a read command still lands on the wrong port, an explicit value is overriding
+detection — check it:
 
 ```bash
 # An exported HEADROOM_PORT always wins over auto-detection

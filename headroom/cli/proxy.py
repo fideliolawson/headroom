@@ -217,9 +217,9 @@ def dashboard(port: int | None, no_open: bool) -> None:
     """
     import webbrowser
 
-    from headroom.cli._utils.proxy_discovery import proxy_is_healthy, resolve_proxy_port
+    from headroom.cli.port_discovery import proxy_is_healthy, resolve_read_port
 
-    resolved_port, origin = resolve_proxy_port(port)
+    resolved_port, origin = resolve_read_port(port)
     url = f"http://127.0.0.1:{resolved_port}/dashboard"
     if origin == "discovered":
         click.echo(f"  Detected live proxy on port {resolved_port}")

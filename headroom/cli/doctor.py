@@ -1062,17 +1062,14 @@ _STATUS_STYLE = {PASS: "green", WARN: "yellow", FAIL: "red", SKIP: "dim"}
 _STATUS_GLYPH = {PASS: "✓", WARN: "⚠", FAIL: "✗", SKIP: "·"}
 
 
-def _render(
-    checks: list[CheckResult], port: int, installed: str
-) -> None:
+def _render(checks: list[CheckResult], port: int, installed: str) -> None:
     from rich.console import Console
     from rich.markup import escape
     from rich.table import Table
 
     console = Console()
     console.print(
-        f"[bold]Headroom Doctor[/bold] "
-        f"[dim]{format_version_label(installed)} · port {port}[/dim]\n"
+        f"[bold]Headroom Doctor[/bold] [dim]{format_version_label(installed)} · port {port}[/dim]\n"
     )
     table = Table(show_header=True, header_style="bold")
     table.add_column("check")

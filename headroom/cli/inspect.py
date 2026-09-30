@@ -153,10 +153,10 @@ def inspect_cmd(port: int | None, last: int, output_format: str, full: bool) -> 
         headroom inspect --full          Include unchanged messages
         headroom inspect --format json   Raw feed for piping into another tool
     """
-    from headroom.cli._utils.proxy_discovery import resolve_proxy_port
+    from headroom.cli.port_discovery import resolve_read_port
     from headroom.install.health import probe_json
 
-    resolved_port, _origin = resolve_proxy_port(port)
+    resolved_port, _origin = resolve_read_port(port)
     base_url = f"http://127.0.0.1:{resolved_port}"
     payload = probe_json(f"{base_url}/transformations/feed?limit={last}", timeout=5.0)
 

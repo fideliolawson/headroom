@@ -26,6 +26,9 @@ def runner() -> CliRunner:
 def clients_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     workspace = tmp_path / "workspace"
     monkeypatch.setattr(paths_mod, "workspace_dir", lambda: workspace)
+    monkeypatch.delenv("HEADROOM_PORT", raising=False)
+    monkeypatch.delenv("HEADROOM_PORT_DISCOVERY", raising=False)
+    monkeypatch.chdir(tmp_path)
     return workspace / "clients"
 
 
@@ -38,7 +41,7 @@ def _write_marker(clients_root: Path, port: int, pid: int, *, started_at: float 
 def test_dashboard_falls_back_to_8787_with_no_live_session(
     runner: CliRunner, clients_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from headroom.cli._utils import proxy_discovery as pd
+    from headroom.cli import port_discovery as pd
 
     # Stub the health probe: without this the test would make a real request to
     # 127.0.0.1:8787 and pass/fail depending on whether the developer happens to
@@ -57,7 +60,7 @@ def test_dashboard_discovers_live_session_on_fallback_port(
     runner: CliRunner, clients_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Pins the reported bug: wrap started the proxy on 8788, dashboard must follow."""
-    from headroom.cli._utils import proxy_discovery as pd
+    from headroom.cli import port_discovery as pd
 
     _write_marker(clients_root, 8788, pid=1, started_at=100.0)
     monkeypatch.setattr(pd, "pid_alive", lambda pid: True)
@@ -75,7 +78,7 @@ def test_dashboard_discovers_live_session_on_fallback_port(
 def test_dashboard_explicit_port_overrides_discovery(
     runner: CliRunner, clients_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from headroom.cli._utils import proxy_discovery as pd
+    from headroom.cli import port_discovery as pd
 
     _write_marker(clients_root, 8788, pid=1, started_at=100.0)
     monkeypatch.setattr(pd, "pid_alive", lambda pid: True)
@@ -91,7 +94,7 @@ def test_dashboard_explicit_port_overrides_discovery(
 def test_dashboard_env_port_overrides_discovery(
     runner: CliRunner, clients_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from headroom.cli._utils import proxy_discovery as pd
+    from headroom.cli import port_discovery as pd
 
     _write_marker(clients_root, 8788, pid=1, started_at=100.0)
     monkeypatch.setattr(pd, "pid_alive", lambda pid: True)
