@@ -127,6 +127,14 @@ class TestCodexHome:
 
 
 class TestPortDiscovery:
+    @pytest.fixture(autouse=True)
+    def isolate_live_client_discovery(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HEADROOM_WORKSPACE_DIR", str(tmp_path / "workspace"))
+        monkeypatch.delenv("HEADROOM_PORT", raising=False)
+        monkeypatch.delenv("HEADROOM_PORT_DISCOVERY", raising=False)
+
     def test_default_port_reads_env(self) -> None:
         assert pd.default_port({}) == 8787
         assert pd.default_port({"HEADROOM_PORT": "9100"}) == 9100
@@ -145,6 +153,36 @@ class TestPortDiscovery:
             cwd=tmp_path,
         )
         assert ports == [8787, 9100, 9200, 9300]
+
+    def test_candidates_order_live_client_markers_by_recency(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clients = tmp_path / "workspace" / "clients"
+        markers = {
+            3001: (9000, 100.0),
+            3002: (9001, 200.0),
+            3003: (9002, 300.0),
+        }
+        for pid, (port, started_at) in markers.items():
+            marker = clients / str(port) / f"{pid}.json"
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps({"pid": pid, "started_at": started_at}), encoding="utf-8")
+        dead_marker = clients / "9002" / "3003.json"
+        monkeypatch.setattr(pd, "pid_alive", lambda pid: pid != 3003)
+
+        marker_path = tmp_path / ".claude" / ".headroom_wrap_marker.json"
+        marker_path.parent.mkdir()
+        marker_path.write_text(json.dumps({"port": 9300}), encoding="utf-8")
+        ports = pd.candidate_ports(
+            8787,
+            environ={"HEADROOM_PORT": "9100"},
+            manifests=[_manifest("profile", 9200)],
+            cwd=tmp_path,
+            extra=[9400],
+        )
+
+        assert ports == [8787, 9100, 9400, 9001, 9000, 9200, 9300]
+        assert not dead_marker.exists()
 
     def test_candidates_are_bounded(self, tmp_path: Path) -> None:
         manifests = [_manifest(str(i), 10000 + i) for i in range(50)]
