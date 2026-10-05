@@ -241,6 +241,18 @@ def dashboard(port: int | None, no_open: bool) -> None:
 
 @main.command()
 @click.option(
+    "--headroom-deployment-profile",
+    hidden=True,
+    expose_value=False,
+    help="Internal persistent-deployment identity marker.",
+)
+@click.option(
+    "--headroom-deployment-runtime",
+    hidden=True,
+    expose_value=False,
+    help="Internal persistent-deployment identity marker.",
+)
+@click.option(
     "--host",
     default="127.0.0.1",
     envvar="HEADROOM_HOST",
@@ -543,6 +555,18 @@ def dashboard(port: int | None, no_open: bool) -> None:
         "large bodies over a slow link. Lower it to fail over a dead pooled "
         "connection faster; --connect-timeout-seconds only guards a fresh connect. "
         "Env: HEADROOM_WRITE_TIMEOUT_SECONDS."
+    ),
+)
+@click.option(
+    "--upstream-tcp-keepalive-seconds",
+    type=click.IntRange(min=0),
+    default=None,
+    envvar="HEADROOM_UPSTREAM_TCP_KEEPALIVE_SECONDS",
+    help=(
+        "Seconds an upstream connection may sit silent before TCP keepalive "
+        "probes it (default: 30, 0 disables). A link that dies without a reset "
+        "then fails over after about this + 60s instead of waiting out the read "
+        "timeout. Env: HEADROOM_UPSTREAM_TCP_KEEPALIVE_SECONDS."
     ),
 )
 @click.option(
@@ -1074,6 +1098,7 @@ def proxy(
     request_timeout_seconds: int | None,
     connect_timeout_seconds: int | None,
     write_timeout_seconds: int | None,
+    upstream_tcp_keepalive_seconds: int | None,
     anthropic_buffered_request_timeout_seconds: int | None,
     anthropic_pre_upstream_concurrency: int | None,
     anthropic_pre_upstream_acquire_timeout_seconds: float | None,
@@ -1153,6 +1178,7 @@ def proxy(
     # Import here to avoid slow startup
     from headroom.proxy.server import (
         ProxyConfig,
+        _get_env_optional_bool,
         _parse_csv_tools,
         _parse_exclude_tools,
         _parse_tool_profiles,
@@ -1306,12 +1332,20 @@ def proxy(
             _paths.codex_wire_debug_dir()
         )
 
-    # Stateless mode: suppress TOIN filesystem persistence
+    # Stateless mode: suppress TOIN filesystem persistence, and export the flag
+    # so code that runs before the proxy records it (the update check) and
+    # child processes see the same answer as paths.process_is_stateless().
     if is_stateless:
         os.environ["HEADROOM_TOIN_BACKEND"] = "none"
+        os.environ["HEADROOM_STATELESS"] = "1"
 
-    # License key for managed/enterprise deployments (optional)
-    license_key = os.environ.get("HEADROOM_LICENSE_KEY")
+    # Licence token (HEADROOM_LICENSE; HEADROOM_LICENSE_KEY is a deprecated
+    # alias). Having one set never enables outbound usage reporting: that
+    # needs the explicit HEADROOM_USAGE_REPORTING=1 opt-in.
+    from headroom.license_env import resolve_license_token, usage_reporting_enabled
+
+    license_key = resolve_license_token()
+    usage_reporting = usage_reporting_enabled()
 
     # Qdrant connection for the qdrant-neo4j backend. CLI flags default
     # to None; when omitted we let ProxyConfig's default_factory resolve
@@ -1344,7 +1378,8 @@ def proxy(
         rate_limit_enabled=not no_rate_limit,
         rate_limit_requests_per_minute=rpm if rpm is not None else 60,
         rate_limit_tokens_per_minute=tpm,
-        compress_user_messages=_get_env_bool("HEADROOM_COMPRESS_USER_MESSAGES", False),
+        # Same parse as the server entry points: empty means unset (profile).
+        compress_user_messages=_get_env_optional_bool("HEADROOM_COMPRESS_USER_MESSAGES"),
         periodic_malloc_trim_enabled=_get_env_bool(
             "HEADROOM_MALLOC_TRIM", default_periodic_malloc_trim()
         ),
@@ -1410,6 +1445,9 @@ def proxy(
         if connect_timeout_seconds is not None
         else 10,
         write_timeout_seconds=write_timeout_seconds if write_timeout_seconds is not None else 150,
+        upstream_tcp_keepalive_seconds=(
+            upstream_tcp_keepalive_seconds if upstream_tcp_keepalive_seconds is not None else 30
+        ),
         anthropic_buffered_request_timeout_seconds=(
             anthropic_buffered_request_timeout_seconds
             if anthropic_buffered_request_timeout_seconds is not None
@@ -1481,6 +1519,7 @@ def proxy(
         anyllm_provider=effective_anyllm_provider,
         # License / Usage Reporting (managed/enterprise)
         license_key=license_key,
+        usage_reporting=usage_reporting,
         # Stateless mode: disable all filesystem writes
         stateless=is_stateless,
         # Unit 4: bounded pre-upstream concurrency on the Anthropic HTTP
@@ -1506,9 +1545,16 @@ def proxy(
     if config.memory_enabled:
         memory_status = "ENABLED (multi-provider)"
 
-    license_status = "OSS (no license key)"
+    license_status = "OSS (no licence)"
     if license_key:
-        license_status = f"MANAGED (key={license_key[:8]}...)"
+        # Never print licence material, not even a prefix.
+        if not usage_reporting:
+            reporting = "off"
+        elif config.offline:
+            reporting = "suppressed by HEADROOM_OFFLINE"
+        else:
+            reporting = "ON"
+        license_status = f"LICENSED (usage reporting {reporting})"
 
     provider_api_targets = resolve_api_targets(config.provider_api_overrides)
     anthropic_url = provider_api_targets.anthropic
@@ -1625,21 +1671,33 @@ Memory (Multi-Provider):
             f"(available: {','.join(_ext_available)})"
         )
 
-    # Security posture line: inbound auth token + air-gap mode, and a loud
-    # flag for the open-bind case (non-loopback host with no token).
-    from headroom.proxy.loopback_guard import is_loopback_host
+    # Security posture line: inbound auth token + air-gap mode. An open bind
+    # (non-loopback host, no token) is refused here, before the banner, unless
+    # the operator acknowledged it explicitly; see headroom/proxy/bind_policy.py.
+    from headroom.proxy.bind_policy import OPEN_BIND_ACK_ENV, evaluate_bind_policy
 
-    _auth_on = bool(config.proxy_token or os.environ.get("HEADROOM_PROXY_TOKEN"))
+    _bind = evaluate_bind_policy(config.host, config.proxy_token)
+    if _bind.refused:
+        raise click.ClickException(_bind.message())
+    _auth_on = _bind.token_configured
+    _open_bind_note = (
+        f" · WARNING open bind, /v1/* UNAUTHENTICATED (acknowledged via {OPEN_BIND_ACK_ENV}=1)"
+        if _bind.open_bind
+        else ""
+    )
     if config.offline:
-        _security_status = "OFFLINE (all egress disabled)" + (
-            " · inbound token REQUIRED (non-loopback)" if _auth_on else ""
+        # Offline masks nothing: an acknowledged open bind is still an open bind.
+        _security_status = (
+            "OFFLINE (all egress disabled)"
+            + (" · inbound token REQUIRED (non-loopback)" if _auth_on else "")
+            + _open_bind_note
         )
     elif _auth_on:
         _security_status = "inbound token REQUIRED for non-loopback callers"
-    elif not is_loopback_host(config.host):
+    elif _bind.open_bind:
         _security_status = (
             "WARNING non-loopback bind with NO token — /v1/* is UNAUTHENTICATED "
-            "(set HEADROOM_PROXY_TOKEN)"
+            f"(acknowledged via {OPEN_BIND_ACK_ENV}=1; set HEADROOM_PROXY_TOKEN instead)"
         )
     else:
         _security_status = "loopback-only (no inbound token)"
