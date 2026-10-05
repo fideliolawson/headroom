@@ -5702,6 +5702,7 @@ def claude(
         click.echo()
 
         env = os.environ.copy()
+        env["HEADROOM_PORT"] = str(actual_port)
         if use_vertex:
             # Claude Code stays in Vertex mode (keeps CLAUDE_CODE_USE_VERTEX,
             # ANTHROPIC_VERTEX_PROJECT_ID, CLOUD_ML_REGION, ADC — all inherited);

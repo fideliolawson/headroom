@@ -250,3 +250,47 @@ def test_proxy_is_healthy_rejects_unrelated_json_service(
         lambda url, timeout=1.0: {"service": "something-else", "status": "healthy"},
     )
     assert pd.proxy_is_healthy(8787) is False
+
+
+def test_stale_markers_do_not_hide_healthy_deployment(
+    clients_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Many live-but-unhealthy wrap sessions must not evict a recorded deployment."""
+    from types import SimpleNamespace
+
+    from headroom.install import state
+
+    for offset in range(7):
+        _write_marker(clients_root, 8800 + offset, pid=100 + offset, started_at=float(offset))
+    monkeypatch.setattr(pd, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(state, "list_manifests", lambda: [SimpleNamespace(port=9200)])
+    monkeypatch.setattr(pd, "proxy_is_healthy", lambda port, **_: port == 9200)
+
+    ports = pd.candidate_ports(8787, environ={}, cwd=clients_root.parent)
+    assert 9200 in ports
+    assert len([p for p in ports if 8800 <= p <= 8806]) == pd._MAX_CLIENT_MARKER_CANDIDATES
+    assert pd.resolve_read_port(None) == (9200, "discovered")
+
+
+def test_marker_ports_are_probed_concurrently_once(
+    clients_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    _write_marker(clients_root, 8788, pid=1, started_at=300.0)
+    _write_marker(clients_root, 8789, pid=2, started_at=200.0)
+    _write_marker(clients_root, 8790, pid=3, started_at=100.0)
+    monkeypatch.setattr(pd, "pid_alive", lambda pid: True)
+    barrier = threading.Barrier(3, timeout=2)
+    calls: list[int] = []
+
+    def probe(port: int, **_: object) -> bool:
+        calls.append(port)
+        if port in {8788, 8789, 8790}:
+            barrier.wait()  # deadlocks (BrokenBarrierError) unless probed concurrently
+        return port in {8789, 8790}
+
+    monkeypatch.setattr(pd, "proxy_is_healthy", probe)
+
+    assert pd.resolve_read_port(None) == (8789, "discovered")
+    assert sorted(calls) == [8788, 8789, 8790]

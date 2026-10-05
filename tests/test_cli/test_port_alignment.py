@@ -181,7 +181,7 @@ class TestPortDiscovery:
             extra=[9400],
         )
 
-        assert ports == [8787, 9100, 9400, 9001, 9000, 9200, 9300]
+        assert ports == [8787, 9100, 9400, 9200, 9300, 9001, 9000]
         assert not dead_marker.exists()
 
     def test_candidates_are_bounded(self, tmp_path: Path) -> None:

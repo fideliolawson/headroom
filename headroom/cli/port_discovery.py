@@ -35,6 +35,7 @@ PORT_ENV = "HEADROOM_PORT"
 DISCOVERY_ENV = "HEADROOM_PORT_DISCOVERY"
 _PROBE_TIMEOUT_SECONDS = 0.5
 _MAX_CANDIDATES = 8
+_MAX_CLIENT_MARKER_CANDIDATES = 3
 _HEADROOM_SERVICE = "headroom-proxy"
 _LOOPBACK_PORT_RE = re.compile(r"^https?://(?:127\.0\.0\.1|localhost|\[::1\]):(\d+)")
 
@@ -184,9 +185,10 @@ def candidate_ports(
         ordered.append(env_value)
     ordered.append(DEFAULT_PROXY_PORT)
     ordered.extend(extra)
-    ordered.extend(port for port, _ in live_client_proxy_ports())
     ordered.extend(_manifest_ports(manifests))
     ordered.extend(_wrap_marker_ports(cwd))
+    # Bounded and last so stale wrap sessions can't evict recorded deployments.
+    ordered.extend(port for port, _ in live_client_proxy_ports()[:_MAX_CLIENT_MARKER_CANDIDATES])
     seen: list[int] = []
     for port in ordered:
         if port not in seen:
@@ -279,11 +281,17 @@ def resolve_read_port(
     if not discovery_enabled():
         return default, "default"
 
-    for port, _started_at in live_client_proxy_ports():
-        if proxy_is_healthy(port):
-            return port, "discovered"
+    marker_ports = [port for port, _ in live_client_proxy_ports()[:_MAX_CLIENT_MARKER_CANDIDATES]]
+    healthy_markers = live_ports(marker_ports, probe=proxy_is_healthy)
+    if healthy_markers:
+        return healthy_markers[0], "discovered"
 
-    live_port = find_live_proxy_elsewhere(default, probe=proxy_is_healthy)
+    already_probed = set(marker_ports)
+
+    def _probe_unchecked(port: int) -> bool:
+        return port not in already_probed and proxy_is_healthy(port)
+
+    live_port = find_live_proxy_elsewhere(default, probe=_probe_unchecked)
     if live_port is not None:
         return live_port, "discovered"
     return default, "default"
